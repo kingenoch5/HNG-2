@@ -177,9 +177,9 @@ app.post("/strings",(req,res) => {
     }
     const currentTime = new Date().toISOString();
     const returnObj = {
-        "value" : value,
         "id" : getSha256Hash(value),
         "properties" : {
+        "value" : value,
             "length" : getLength(value),
             "is_palindrome" : isPalindrome(value),
             "word_count" : getWordCount(value),
@@ -253,10 +253,10 @@ app.get("/strings/filter-by-natural-language", (req,res) => {
 app.delete("/strings/:string_value", (req,res) => {
     const str = req.params.string_value;
     if (!(str in stringdb)) {
-        return res.status(404).value("String does not exist in the system");
+        return res.status(404).send("String does not exist in the system");
     }
-    delete stringdb.str;
-    res.status(204);
+    delete stringdb[str];
+    res.status(204).end();
 });
 
 
