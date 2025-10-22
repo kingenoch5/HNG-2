@@ -1,6 +1,9 @@
 import express from "express";
 import {createHash} from 'crypto';
 import {z} from "zod";
+import nlp from "compromise";
+
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const stringdb = {};
@@ -31,6 +34,8 @@ function getUniqueCharactersCount(string) {
     const uniqueCharacters = new Set(string);
     return uniqueCharacters.size;
 }
+
+
 function getWordCount(string) {
 
     let wordArray = string.split(" ");
@@ -38,10 +43,12 @@ function getWordCount(string) {
     return wordArray.length;
 }
 
+
 function getSha256Hash(string) {
     const hash = createHash('sha256').update(string,"utf-8").digest('hex');
     return hash;
 }
+
 
 function createFreqMap(string) {
     let freqMap = {};
@@ -57,12 +64,14 @@ function createFreqMap(string) {
     return freqMap;
 }
 
+
 function palindrome_filter(is_palindrome, db_value) {
     if (is_palindrome !== undefined) {
         return db_value["properties"]["is_palindrome"] === is_palindrome;
     }
     return true;
 }
+
 
 function word_count_filter(word_count, db_value) {
     if (word_count !== undefined) {
@@ -71,6 +80,7 @@ function word_count_filter(word_count, db_value) {
     return true;
 }
 
+
 function contains_character_filter(character, db_value) {
     if (character !== undefined) {
         return (character in db_value["properties"]["character_frequency_map"]);
@@ -78,12 +88,79 @@ function contains_character_filter(character, db_value) {
     return true;
 }
 
+
 function applyFilter(is_palindrome,word_count,character,min_length,max_length,db_value) {
     const length = db_value["properties"]["length"];
     return (palindrome_filter(is_palindrome,db_value) && word_count_filter (word_count,db_value) 
     && contains_character_filter (character,db_value) && (min_length === undefined || length >= min_length)
      && (max_length === undefined || length <= max_length));
 }
+
+
+function parseNaturalLanguage(query) {
+  const doc = nlp(query.toLowerCase());
+  const filters = {};
+
+  // Normalize query text
+  const text = query.toLowerCase();
+
+  // === Palindrome detection ===
+  if (text.includes("palindrome") || text.includes("palindromic"))
+    filters.is_palindrome = true;
+  if (text.includes("non-palindrome") || text.includes("not palindrome"))
+    filters.is_palindrome = false;
+
+  // === Word count ===
+  if (text.includes("single word") || text.includes("one word"))
+    filters.word_count = 1;
+  else if (text.includes("double word") || text.includes("two words"))
+    filters.word_count = 2;
+  else if (text.match(/(\d+)\s+word/)) {
+    const num = parseInt(text.match(/(\d+)\s+word/)[1]);
+    if (!isNaN(num)) filters.word_count = num;
+  }
+
+  // === Length comparisons ===
+  const numbers = doc.numbers().toNumber().out("array");
+  const num = numbers?.[0];
+
+  if (text.includes("longer than") && num) filters.min_length = num + 1;
+  else if (text.includes("at least") && num) filters.min_length = num;
+  else if (text.includes("shorter than") && num) filters.max_length = num - 1;
+  else if (text.includes("at most") && num) filters.max_length = num;
+
+  // === Contains specific character ===
+  const charMatch =
+    text.match(/letter\s+([a-z])/i) || text.match(/character\s+([a-z0-9])/i);
+  if (charMatch) filters.contains_character = charMatch[1].toLowerCase();
+
+  // === Heuristics for vowels ===
+  if (text.includes("first vowel") || text.includes("vowel"))
+    filters.contains_character = "a";
+
+  // === Edge-case heuristic examples ===
+  if (text.includes("empty") || text.includes("blank"))
+    filters.min_length = 0;
+  if (text.includes("spaces") || text.includes("multi-word"))
+    filters.word_count = { $gt: 1 }; // pseudo-operator style
+
+  // === Conflict resolution ===
+  const conflicting =
+    filters.min_length && filters.max_length && filters.min_length > filters.max_length;
+  if (conflicting)
+    throw new Error("422 Unprocessable Entity: conflicting filters");
+  if (!Object.keys(filters).length)
+
+    throw new Error("400 Bad Request: unable to parse query");
+
+  return {
+    interpreted_query: {
+      original: query,
+      parsed_filters: filters,
+    },
+  };
+}
+
 
 app.post("/strings",(req,res) => {
     let {value, ...rest} = req.body;
@@ -117,14 +194,6 @@ app.post("/strings",(req,res) => {
 });
 
 
-app.get("/strings/:string_value", (req,res) => {
-    const str = req.params.string_value;
-    if(!(str in stringdb)) {
-        return res.status(404).send("String does not exist in the system");
-    }
-    res.status(200).json(stringdb[str]);
-})
-
 app.get("/strings", (req,res) => {
     const result = reqSchema.safeParse(req.query)
     if (!result.success) {
@@ -144,5 +213,60 @@ app.get("/strings", (req,res) => {
     }
     res.status(200).send(responseObj);
 });
+
+
+app.get("/strings/filter-by-natural-language", (req,res) => {
+    try {
+        const {query} = req.query;
+        console.log(query);
+        const filterDict = parseNaturalLanguage(query)["interpreted_query"]["parsed_filters"];
+        console.log(filterDict);
+        const {is_palindrome,min_length,
+    max_length,word_count,
+    contains_character} = filterDict;
+        var returnData = [];
+    for (const entry in stringdb) {
+        if (applyFilter(is_palindrome,word_count,contains_character,min_length,max_length,stringdb[entry])) {
+            returnData.push(entry);
+    }
+}
+    const responseObj = {
+        "data" : returnData,
+        "count" : returnData.length,
+        "filters_applied" : filterDict
+    }
+    res.status(200).send(responseObj);
+    }
+
+    catch(err) {
+        if (err.message.startsWith("400")) {
+            return res.status(400).send("Unable to parse natural language query");
+        }
+        if (err.message.startsWith("422")) {
+            return res.status(422).send("Query parsed but resulted in conflicting filters");
+        }
+    }
+    
+});
+
+
+app.delete("/strings/:string_value", (req,res) => {
+    const str = req.params.string_value;
+    if (!(str in stringdb)) {
+        return res.status(404).value("String does not exist in the system");
+    }
+    delete stringdb.str;
+    res.status(204);
+});
+
+
+app.get("/strings/:string_value", (req,res) => {
+    const str = req.params.string_value;
+    if(!(str in stringdb)) {
+        return res.status(404).send("String does not exist in the system");
+    }
+    res.status(200).json(stringdb[str]);
+});
+
 
 app.listen(PORT, () => {console.log(`Server started at port ${PORT}`)})
