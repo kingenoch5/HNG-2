@@ -1,11 +1,15 @@
 import express from "express";
 import {createHash} from 'crypto';
+import {z} from "zod";
 const app = express();
 const PORT = process.env.PORT || 3000;
 const stringdb = {};
-const allowedQueries = {"is_palindrome":"boolean","min_length":"number",
-    "max_length":"number","word_count":"number",
-    "contains_character":"string"};
+const typeInt = z.coerce.number().int().optional();
+const typeStr = z.string().optional();
+const typeBool = z.coerce.boolean().optional();
+const reqSchema = z.object({"is_palindrome":typeBool,"min_length":typeInt,
+    "max_length":typeInt,"word_count": typeInt,
+    "contains_character":typeStr});
 app.use(express.json());
 
 function getLength(string) {
@@ -14,19 +18,23 @@ function getLength(string) {
 
 
 function isPalindrome(string) {
-    const reversedString = string.split("").reverse.join("");
-    return string === reversedString;
+  const cleaned = string
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, ""); // keep only letters and digits
+  const reversed = [...cleaned].reverse().join("");
+  return cleaned === reversed;
 }
+
 
 
 function getUniqueCharactersCount(string) {
     const uniqueCharacters = new Set(string);
     return uniqueCharacters.size;
 }
-
 function getWordCount(string) {
-    const wordArray = string.split(" ");
-    wordArray = wordArray.filter((x) >= x === "");
+
+    let wordArray = string.split(" ");
+    wordArray = wordArray.filter(x => x !== "");
     return wordArray.length;
 }
 
@@ -36,14 +44,14 @@ function getSha256Hash(string) {
 }
 
 function createFreqMap(string) {
-    const freqMap = {};
-    for (const i = 0; i<string.length; i++) {
+    let freqMap = {};
+    for (let i = 0; i<string.length; i++) {
         let char = string[i];
         if (char in freqMap) {
-            freqMap.char += 1;
+            freqMap[char] += 1;
         }
         else {
-            freqMap.char = 1;
+            freqMap[char] = 1;
         } 
     }
     return freqMap;
@@ -51,20 +59,23 @@ function createFreqMap(string) {
 
 function palindrome_filter(is_palindrome, db_value) {
     if (is_palindrome !== undefined) {
-        return db_value["properties"]["is_palindrome"] = is_palindrome;
+        return db_value["properties"]["is_palindrome"] === is_palindrome;
     }
+    return true;
 }
 
 function word_count_filter(word_count, db_value) {
     if (word_count !== undefined) {
-        return db_value["properties"]["word_count"] = word_count;
+        return db_value["properties"]["word_count"] === word_count;
     }
+    return true;
 }
 
 function contains_character_filter(character, db_value) {
     if (character !== undefined) {
-        return character in db_value["properties"]["character_frequency_map"];
+        return (character in db_value["properties"]["character_frequency_map"]);
     }
+    return true;
 }
 
 function applyFilter(is_palindrome,word_count,character,min_length,max_length,db_value) {
@@ -75,7 +86,7 @@ function applyFilter(is_palindrome,word_count,character,min_length,max_length,db
 }
 
 app.post("/strings",(req,res) => {
-    const {value, ...rest} = req.body;
+    let {value, ...rest} = req.body;
     if(!value || Object.keys(rest).length > 0) {
         return res.status(400).send('Invalid request body or missing "value" field');
     }
@@ -94,8 +105,8 @@ app.post("/strings",(req,res) => {
         "properties" : {
             "length" : getLength(value),
             "is_palindrome" : isPalindrome(value),
-            "unique_characters" : getUniqueCharactersCount(value),
             "word_count" : getWordCount(value),
+            "unique_characters" : getUniqueCharactersCount(value),
             "sha256_hash" : getSha256Hash(value),
             "character_frequency_map" : createFreqMap(value)
         },
@@ -115,22 +126,23 @@ app.get("/strings/:string_value", (req,res) => {
 })
 
 app.get("/strings", (req,res) => {
-    const entries = Object.entries(req.query);
-    const {is_palindrome,min_length,max_length,word_count,contains_character} = req.query;
-    const invalid = entries.filter(([key, value]) => !(key in allowedQueries) || (String(typeof value) !== allowedQueries[key]));
-    if (invalid.length > 0) {
+    const result = reqSchema.safeParse(req.query)
+    if (!result.success) {
         return res.status(400).send("Invalid query parameter values or types");
     }
-    returnData = [];
+    const {is_palindrome,min_length,max_length,word_count,contains_character} = result.data;
+    var returnData = [];
     for (const entry in stringdb) {
-        if (applyFilter(is_palindrome,word_count,contains_character,min_length,max_length)) {
+        if (applyFilter(is_palindrome,word_count,contains_character,min_length,max_length,stringdb[entry])) {
             returnData.push(entry);
-        }
     }
-    responseObj = {
+}
+    const responseObj = {
         "data" : returnData,
         "count" : returnData.length,
-        "filters_applied" : Object.fromEntries(entries)
+        "filters_applied" : result.data
     }
     res.status(200).send(responseObj);
 });
+
+app.listen(PORT, () => {console.log(`Server started at port ${PORT}`)})
