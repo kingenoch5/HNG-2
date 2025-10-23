@@ -165,15 +165,15 @@ function parseNaturalLanguage(query) {
 app.post("/strings",(req,res) => {
     let {value, ...rest} = req.body;
     if(!value || Object.keys(rest).length > 0) {
-        return res.status(400).send('Invalid request body or missing "value" field');
+        return res.status(400).json({"message":'Invalid request body or missing "value" field'});
     }
 
     if (value in stringdb) {
-        return res.status(409).send("String already exists in system");
+        return res.status(409).json({"message":"String already exists in system"});
     }
 
     if (typeof value != "string") {
-        return res.status(422).send('Invalid data type for "value" (must be string)');
+        return res.status(422).json({"message":'Invalid data type for "value" (must be string)'});
     }
     const currentTime = new Date().toISOString();
     const returnObj = {
@@ -190,14 +190,14 @@ app.post("/strings",(req,res) => {
         "created_at": currentTime
     };
     stringdb[value] = returnObj;
-    res.status(201).send(returnObj);
+    res.status(201).json(returnObj);
 });
 
 
 app.get("/strings", (req,res) => {
     const result = reqSchema.safeParse(req.query)
     if (!result.success) {
-        return res.status(400).send("Invalid query parameter values or types");
+        return res.status(400).json({"message":"Invalid query parameter values or types"});
     }
     const {is_palindrome,min_length,max_length,word_count,contains_character} = result.data;
     var returnData = [];
@@ -211,7 +211,7 @@ app.get("/strings", (req,res) => {
         "count" : returnData.length,
         "filters_applied" : result.data
     }
-    res.status(200).send(responseObj);
+    res.status(200).json(responseObj);
 });
 
 
@@ -235,15 +235,15 @@ app.get("/strings/filter-by-natural-language", (req,res) => {
         "count" : returnData.length,
         "filters_applied" : filterDict
     }
-    res.status(200).send(responseObj);
+    res.status(200).json(responseObj);
     }
 
     catch(err) {
         if (err.message.startsWith("400")) {
-            return res.status(400).send("Unable to parse natural language query");
+            return res.status(400).json({"message":"Unable to parse natural language query"});
         }
         if (err.message.startsWith("422")) {
-            return res.status(422).send("Query parsed but resulted in conflicting filters");
+            return res.status(422).json({"message":"Query parsed but resulted in conflicting filters"});
         }
     }
     
@@ -253,7 +253,7 @@ app.get("/strings/filter-by-natural-language", (req,res) => {
 app.delete("/strings/:string_value", (req,res) => {
     const str = req.params.string_value;
     if (!(str in stringdb)) {
-        return res.status(404).send("String does not exist in the system");
+        return res.status(404).json({"message":"String does not exist in the system"});
     }
     delete stringdb[str];
     res.status(204).end();
@@ -263,7 +263,7 @@ app.delete("/strings/:string_value", (req,res) => {
 app.get("/strings/:string_value", (req,res) => {
     const str = req.params.string_value;
     if(!(str in stringdb)) {
-        return res.status(404).send("String does not exist in the system");
+        return res.status(404).json({"message":"String does not exist in the system"});
     }
     res.status(200).json(stringdb[str]);
 });
